@@ -1,11 +1,11 @@
 <?php
 /**
- * Plugin Name: WooCommerce Buy Now Button
- * Plugin URI: https://yourwebsite.com
+ * Plugin Name: WC Buy Now Button
+ * Plugin URI: https://rankegg.com
  * Description: Adds "Buy Now" buttons throughout your WooCommerce store - product pages, category pages, Elementor, and more. Redirects directly to checkout.
  * Version: 1.0.0
- * Author: Your Name
- * Author URI: https://yourwebsite.com
+ * Author: Rasel Ahmed
+ * Author URI: https://rankegg.com
  * Text Domain: wc-buy-now
  * Domain Path: /languages
  * Requires at least: 5.0
@@ -20,6 +20,18 @@
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
+
+	
+/**
+	 * HPOS compatibility 
+	 */
+
+add_action( 'before_woocommerce_init', function() {
+	if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
+	}
+} );
+
 
 // Define plugin constants
 define( 'WC_BUY_NOW_VERSION', '1.0.0' );
@@ -38,6 +50,7 @@ class WC_Buy_Now_Button {
         add_action( 'init', array( $this, 'init' ) );
         register_activation_hook( __FILE__, array( $this, 'activate' ) );
         register_deactivation_hook( __FILE__, array( $this, 'deactivate' ) );
+		add_filter( 'plugin_action_links_' . plugin_basename(__FILE__), array( $this, 'add_settings_link' ) );
     }
     
     /**
@@ -62,6 +75,7 @@ class WC_Buy_Now_Button {
         // Add Buy Now buttons to various locations
         add_action( 'woocommerce_after_add_to_cart_button', array( $this, 'add_buy_now_button_single_product' ) );
         add_action( 'woocommerce_after_shop_loop_item', array( $this, 'add_buy_now_button_loop' ), 15 );
+		//add_filter( 'woocommerce_loop_add_to_cart_link', array( $this, 'add_buy_now_to_loop_button' ), 20, 2 );
         
         // Handle Buy Now functionality
         add_action( 'wp_loaded', array( $this, 'handle_buy_now_request' ), 20 );
@@ -79,6 +93,7 @@ class WC_Buy_Now_Button {
         // Shortcode support
         add_shortcode( 'buy_now_button', array( $this, 'buy_now_shortcode' ) );
     }
+	
     
     /**
      * Load admin functionality
@@ -105,7 +120,7 @@ class WC_Buy_Now_Button {
         
         ?>
         <button type="button" 
-                class="<?php echo esc_attr( $button_class ); ?>" 
+                class="buy-now-button <?php echo esc_attr( $button_class ); ?>" 
                 data-product-id="<?php echo esc_attr( $product->get_id() ); ?>"
                 data-product-type="<?php echo esc_attr( $product->get_type() ); ?>">
             <?php echo esc_html( $button_text ); ?>
@@ -128,7 +143,7 @@ class WC_Buy_Now_Button {
         
         ?>
         <button type="button" 
-                class="<?php echo esc_attr( $button_class ); ?> buy-now-loop" 
+                class="buy-now-button <?php echo esc_attr( $button_class ); ?> buy-now-loop" 
                 data-product-id="<?php echo esc_attr( $product->get_id() ); ?>"
                 data-product-type="<?php echo esc_attr( $product->get_type() ); ?>">
             <?php echo esc_html( $button_text ); ?>
@@ -205,56 +220,121 @@ class WC_Buy_Now_Button {
     /**
      * Enqueue scripts and styles
      */
+   /**
+     * Enqueue scripts and styles - UPDATED VERSION
+     */
     public function enqueue_scripts() {
-        if ( ! is_woocommerce() && ! is_cart() ) {
-            return;
-        }
         
+        // Enqueue JavaScript
         wp_enqueue_script( 
-            'wc-buy-now', 
+            'wc-buy-now-js', 
             WC_BUY_NOW_PLUGIN_URL . 'assets/buy-now.js', 
-            array( 'jquery' ), 
+            array( 'jquery', 'wc-add-to-cart' ), 
             WC_BUY_NOW_VERSION, 
             true 
         );
         
-        wp_localize_script( 'wc-buy-now', 'wc_buy_now_params', array(
+        // Localize script with parameters
+        wp_localize_script( 'wc-buy-now-js', 'wc_buy_now_params', array(
             'ajax_url' => admin_url( 'admin-ajax.php' ),
             'nonce' => wp_create_nonce( 'buy_now_nonce' ),
             'checkout_url' => wc_get_checkout_url(),
-            'loading_text' => __( 'Processing...', 'wc-buy-now' ),
-            'error_message' => __( 'Something went wrong. Please try again.', 'wc-buy-now' )
+            'loading_text' => __( 'Loading...', 'wc-buy-now' ),
+            'success_text' => __( 'Success..', 'wc-buy-now' ),
+            'error_message' => __( 'Something went wrong. Please try again.', 'wc-buy-now' ),
+            'select_options' => __( 'Please select product options before buying.', 'wc-buy-now' ),
+            'currency_symbol' => get_woocommerce_currency_symbol(),
+            'is_admin' => is_admin() ? 'yes' : 'no'
         ) );
         
-        // Inline styles
+        // Enqueue CSS
+        wp_enqueue_style( 
+            'wc-buy-now-css', 
+            WC_BUY_NOW_PLUGIN_URL . 'assets/buy-now.css', 
+            array( 'woocommerce-general' ), 
+            WC_BUY_NOW_VERSION 
+        );
+        
+        // Add dynamic CSS for customization
+        $this->add_dynamic_css();
+    }
+    
+    /**
+     * Add dynamic CSS based on admin settings
+     */
+    private function add_dynamic_css() {
+        $bg_color = get_option( 'wc_buy_now_bg_color', '#ff6b35' );
+        $text_color = get_option( 'wc_buy_now_text_color', '#ffffff' );
+        $border_radius = get_option( 'wc_buy_now_border_radius', '4px' );
+        
+        // Calculate hover color (darker version of bg color)
+        $hover_color = $this->darken_color( $bg_color, 20 );
+        
         $custom_css = "
         .buy-now-button {
-            background-color: " . get_option( 'wc_buy_now_bg_color', '#ff6b35' ) . " !important;
-            color: " . get_option( 'wc_buy_now_text_color', '#ffffff' ) . " !important;
-            border: none !important;
-            padding: 10px 20px !important;
-            margin: 10px 5px !important;
-            border-radius: 4px !important;
-            cursor: pointer !important;
-            transition: all 0.3s ease !important;
-            text-transform: uppercase !important;
-            font-weight: bold !important;
+            background-color: {$bg_color} !important;
+            color: {$text_color} !important;
+            border-radius: {$border_radius} !important;
         }
         .buy-now-button:hover {
-            opacity: 0.8 !important;
-            transform: translateY(-2px) !important;
+            background-color: {$hover_color} !important;
+            color: {$text_color} !important;
+            box-shadow: 0 4px 8px rgba(" . $this->hex_to_rgb( $bg_color ) . ", 0.3) !important;
         }
-        .buy-now-button:disabled {
-            opacity: 0.6 !important;
-            cursor: not-allowed !important;
+        .buy-now-button:focus {
+            outline: 2px solid {$bg_color} !important;
         }
-        .buy-now-loop {
-            display: block !important;
-            width: 100% !important;
-            text-align: center !important;
+        .product.onsale .buy-now-button {
+            background-color: {$bg_color} !important;
+        }
+        .product.onsale .buy-now-button:hover {
+            background-color: {$hover_color} !important;
         }
         ";
-        wp_add_inline_style( 'woocommerce-general', $custom_css );
+        
+        wp_add_inline_style( 'wc-buy-now-css', $custom_css );
+    }
+    
+    /**
+     * Darken a hex color
+     */
+    private function darken_color( $hex, $percent ) {
+        $hex = str_replace( '#', '', $hex );
+        
+        if ( strlen( $hex ) == 3 ) {
+            $hex = str_repeat( substr( $hex, 0, 1 ), 2 ) . str_repeat( substr( $hex, 1, 1 ), 2 ) . str_repeat( substr( $hex, 2, 1 ), 2 );
+        }
+        
+        $rgb = array(
+            hexdec( substr( $hex, 0, 2 ) ),
+            hexdec( substr( $hex, 2, 2 ) ),
+            hexdec( substr( $hex, 4, 2 ) )
+        );
+        
+        for ( $i = 0; $i < 3; $i++ ) {
+            $rgb[$i] = max( 0, min( 255, $rgb[$i] - ( $rgb[$i] * $percent / 100 ) ) );
+        }
+        
+        return '#' . sprintf( '%02x%02x%02x', $rgb[0], $rgb[1], $rgb[2] );
+    }
+    
+    /**
+     * Convert hex to RGB
+     */
+    private function hex_to_rgb( $hex ) {
+        $hex = str_replace( '#', '', $hex );
+        
+        if ( strlen( $hex ) == 3 ) {
+            $r = hexdec( str_repeat( substr( $hex, 0, 1 ), 2 ) );
+            $g = hexdec( str_repeat( substr( $hex, 1, 1 ), 2 ) );
+            $b = hexdec( str_repeat( substr( $hex, 2, 1 ), 2 ) );
+        } else {
+            $r = hexdec( substr( $hex, 0, 2 ) );
+            $g = hexdec( substr( $hex, 2, 2 ) );
+            $b = hexdec( substr( $hex, 4, 2 ) );
+        }
+        
+        return "$r, $g, $b";
     }
     
     /**
@@ -298,6 +378,16 @@ class WC_Buy_Now_Button {
         $this->add_buy_now_button_loop();
     }
     
+	 /**
+     * Settings link to plugin admin
+     */
+	public function add_settings_link( $links ) {
+			$settings_url = admin_url( 'admin.php?page=wc-buy-now-settings' ); // Replace with your actual settings slug
+			$settings_link = '<a href="' . esc_url( $settings_url ) . '">' . __( 'Settings', 'wc-buy-now' ) . '</a>';
+			array_unshift( $links, $settings_link );
+			return $links;
+		}
+
     /**
      * Admin menu
      */
@@ -305,7 +395,7 @@ class WC_Buy_Now_Button {
         add_submenu_page(
             'woocommerce',
             __( 'Buy Now Settings', 'wc-buy-now' ),
-            __( 'Buy Now', 'wc-buy-now' ),
+            __( 'Buy Now Button', 'wc-buy-now' ),
             'manage_woocommerce',
             'wc-buy-now-settings',
             array( $this, 'admin_page' )
@@ -350,7 +440,7 @@ class WC_Buy_Now_Button {
                     </tr>
                     <tr>
                         <th scope="row"><?php _e( 'CSS Class', 'wc-buy-now' ); ?></th>
-                        <td><input type="text" name="wc_buy_now_button_class" value="<?php echo esc_attr( get_option( 'wc_buy_now_button_class', 'button buy-now-button' ) ); ?>" /></td>
+                        <td><input type="text" name="wc_buy_now_button_class" value="<?php echo esc_attr( get_option( 'wc_buy_now_button_class', 'button buy-now-btn' ) ); ?>" /></td>
                     </tr>
                     <tr>
                         <th scope="row"><?php _e( 'Background Color', 'wc-buy-now' ); ?></th>
@@ -396,12 +486,13 @@ class WC_Buy_Now_Button {
      */
     public function activate() {
         // Set default options
-        add_option( 'wc_buy_now_button_text', __( 'Buy Now', 'wc-buy-now' ) );
+        add_option( 'wc_buy_now_button_text', __( 'Buy Now Button', 'wc-buy-now' ) );
         add_option( 'wc_buy_now_button_class', 'button buy-now-button' );
         add_option( 'wc_buy_now_bg_color', '#ff6b35' );
         add_option( 'wc_buy_now_text_color', '#ffffff' );
         add_option( 'wc_buy_now_clear_cart', 'yes' );
     }
+
     
     /**
      * Plugin deactivation
@@ -424,110 +515,3 @@ class WC_Buy_Now_Button {
 
 // Initialize the plugin
 new WC_Buy_Now_Button();
-
-/**
- * Create the JavaScript file content
- * Save this as assets/buy-now.js in your plugin folder
- */
-function create_buy_now_js_file() {
-    $js_content = "
-jQuery(document).ready(function($) {
-    // Handle Buy Now button clicks
-    $(document).on('click', '.buy-now-button', function(e) {
-        e.preventDefault();
-        
-        var button = $(this);
-        var productId = button.data('product-id');
-        var productType = button.data('product-type');
-        var originalText = button.text();
-        
-        // Disable button and show loading
-        button.prop('disabled', true).text(wc_buy_now_params.loading_text);
-        
-        // Handle variable products
-        if (productType === 'variable') {
-            var variationId = 0;
-            var variationForm = button.closest('form.variations_form');
-            
-            if (variationForm.length > 0) {
-                variationId = variationForm.find('[name=\"variation_id\"]').val();
-                if (!variationId || variationId === '0') {
-                    alert('Please select product options before buying.');
-                    button.prop('disabled', false).text(originalText);
-                    return;
-                }
-            }
-        }
-        
-        // Get quantity
-        var quantity = 1;
-        var quantityInput = button.closest('form').find('[name=\"quantity\"]');
-        if (quantityInput.length > 0) {
-            quantity = quantityInput.val();
-        }
-        
-        // AJAX request
-        $.ajax({
-            url: wc_buy_now_params.ajax_url,
-            type: 'POST',
-            data: {
-                action: 'wc_buy_now',
-                product_id: productId,
-                quantity: quantity,
-                variation_id: variationId || 0,
-                security: wc_buy_now_params.nonce
-            },
-            success: function(response) {
-                if (response.success) {
-                    // Redirect to checkout
-                    window.location.href = response.data.redirect;
-                } else {
-                    alert(response.data.message || wc_buy_now_params.error_message);
-                    button.prop('disabled', false).text(originalText);
-                }
-            },
-            error: function() {
-                alert(wc_buy_now_params.error_message);
-                button.prop('disabled', false).text(originalText);
-            }
-        });
-    });
-    
-    // Handle single product page forms
-    $('form.cart').on('submit', function(e) {
-        var form = $(this);
-        var buyNowClicked = form.data('buy-now-clicked');
-        
-        if (buyNowClicked) {
-            e.preventDefault();
-            form.removeData('buy-now-clicked');
-            
-            var formData = form.serialize() + '&buy_now=1&buy_now_nonce=' + wc_buy_now_params.nonce;
-            
-            $.post(window.location.href, formData, function() {
-                window.location.href = wc_buy_now_params.checkout_url;
-            });
-        }
-    });
-    
-    // Mark form when Buy Now is clicked on single product
-    $('.single-product .buy-now-button').on('click', function(e) {
-        $(this).closest('form').data('buy-now-clicked', true);
-    });
-});
-";
-    
-    // Create assets directory and file
-    $upload_dir = wp_upload_dir();
-    $plugin_dir = $upload_dir['basedir'] . '/wc-buy-now-assets/';
-    
-    if (!file_exists($plugin_dir)) {
-        wp_mkdir_p($plugin_dir);
-    }
-    
-    file_put_contents($plugin_dir . 'buy-now.js', $js_content);
-}
-
-// Create JS file on plugin activation
-register_activation_hook(__FILE__, 'create_buy_now_js_file');
-?>
